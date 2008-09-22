@@ -7,6 +7,10 @@
 #include <unistd.h>
 #include <assert.h>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 static const char *find_oops_code(FILE *in)
 {
 	char *buff = NULL;
@@ -73,46 +77,64 @@ static struct code *parse_oops_code(const char *text)
 	return code;
 }
 
-#define ASM_BLOCK_START "asm volatile ("
-#define ASM_BLOCK_END   ");"
-
-#define PROTOTYPE(x) "void "x"(void) __attribute__((section(\"."x"\")));"
-
 static void print_code(const struct code *code, FILE *out)
 {
 	int i = 0;
 
-	printf("int main(void) { return 0; }\n\n");
+	fprintf(out,
+		".text\n"
+		".global main\n"
+		"main:\n"
+		"nop\n"
+		"\n");
+
+	fprintf(out,
+		".section \".oops\"\n");
 
 	if (code->start_ofs) {
-		printf(PROTOTYPE("before") "\n");
-		printf("void before(void)\n{\n");
-		printf("\t" ASM_BLOCK_START "\n"
-			"\t\t// %u bytes\n"
-			"\t\t\".byte 0x%02x",
+		fprintf(out,
+			".global before\n"
+			"before:\n"
+			"// %u bytes\n"
+			".byte 0x%02x",
 			code->start_ofs,
 			code->bytes[0]);
 		for (i=1; i<code->start_ofs; i++)
-			printf(", 0x%02x", code->bytes[i]);
-		printf("\"\n"
-			"\t" ASM_BLOCK_END "\n"
-			"}\n\n");
+			fprintf(out,
+				", 0x%02x", code->bytes[i]);
+		fprintf(out,
+			"\n"
+			"\n");
 	}
 
 	if (i < code->count) {
-		printf(PROTOTYPE("oops") "\n");
-		printf("void oops(void)\n{\n");
-		printf("\t" ASM_BLOCK_START "\n"
-			"\t\t// %u bytes\n"
-			"\t\t\".byte 0x%02x",
+		fprintf(out,
+			".global oops\n"
+			"oops:\n"
+			"// %u bytes\n"
+			".byte 0x%02x",
 			code->count - i,
 			code->bytes[i]);
 		for (i++; i<code->count; i++)
-			printf(", 0x%02x", code->bytes[i]);
-		printf("\"\n"
-			"\t" ASM_BLOCK_END "\n"
-			"}\n\n");
+			fprintf(out,
+				", 0x%02x", code->bytes[i]);
+		fprintf(out,
+			"\n"
+			"\n");
 	}
+}
+
+static void gen_names(char **s_name, char **x_name)
+{
+	int pid = getpid();
+
+	*s_name = malloc(128);
+	assert(*s_name);
+	snprintf(*s_name, 128, "/tmp/oops-code-%u.S", pid);
+
+	*x_name = malloc(128);
+	assert(*x_name);
+	snprintf(*x_name, 128, "/tmp/oops-code-%u", pid);
 }
 
 int main(void)
@@ -120,11 +142,63 @@ int main(void)
 	const char *text = NULL;
 	struct code *code;
 
+	off_t oops_ip;
+
+	char *asm_name;
+	char *exe_name;
+
+	int asm_fd;
+	FILE *asm_file;
+
+	char *cmd;
+	int rc;
+
+	oops_ip = 0xc01a516b;
+
+	gen_names(&asm_name, &exe_name);
+
+	asm_fd = creat(asm_name, O_CREAT | O_EXCL | O_WRONLY
+			| S_IRUSR | S_IWUSR);
+	assert(asm_fd > 0);
+
+	asm_file = fdopen(asm_fd, "w");
+	assert(asm_file);
+
 	text = find_oops_code(stdin);
-	printf("/*\n * Code: %s */\n\n", text);
+	printf("# Code: %s \n", text);
+	fflush(stdout);
 
 	code = parse_oops_code(text);
-	print_code(code, stdout);
+	print_code(code, asm_file);
+
+	fclose(asm_file);
+	close(asm_fd);
+
+	cmd = malloc(1024);
+	assert(cmd);
+
+	snprintf(cmd, 1024,
+		"gcc -m32 -ggdb "
+		"-Xlinker --section-start -Xlinker .oops=0x%08lx "
+		"-o %s %s",
+		oops_ip, exe_name, asm_name);
+
+	rc = system (cmd);
+	assert(rc == 0);
+
+	snprintf(cmd, 1024,
+		"objdump -D -j .oops "
+		"--start-address=0x%08lx "
+		"--stop-address=0x%08lx %s",
+		oops_ip,
+		oops_ip + code->count,
+		exe_name);
+
+	rc = system (cmd);
+	assert(rc == 0);
+
+	unlink (asm_name);
+	unlink (exe_name);
 
 	return 0;
 }
