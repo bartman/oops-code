@@ -73,16 +73,46 @@ static struct code *parse_oops_code(const char *text)
 	return code;
 }
 
-static void print_code(const struct code *code)
+#define ASM_BLOCK_START "asm volatile ("
+#define ASM_BLOCK_END   ");"
+
+#define PROTOTYPE(x) "void "x"(void) __attribute__((section(\"."x"\")));"
+
+static void print_code(const struct code *code, FILE *out)
 {
-	int i;
-	printf("#");
-	for (i=0; i<code->count; i++)
-		printf(" %s%02x%s",
-				i == code->start_ofs ? "<" : "",
-				code->bytes[i],
-				i == code->start_ofs ? ">" : "");
-	printf("\n");
+	int i = 0;
+
+	printf("int main(void) { return 0; }\n\n");
+
+	if (code->start_ofs) {
+		printf(PROTOTYPE("before") "\n");
+		printf("void before(void)\n{\n");
+		printf("\t" ASM_BLOCK_START "\n"
+			"\t\t// %u bytes\n"
+			"\t\t\".byte 0x%02x",
+			code->start_ofs,
+			code->bytes[0]);
+		for (i=1; i<code->start_ofs; i++)
+			printf(", 0x%02x", code->bytes[i]);
+		printf("\"\n"
+			"\t" ASM_BLOCK_END "\n"
+			"}\n\n");
+	}
+
+	if (i < code->count) {
+		printf(PROTOTYPE("oops") "\n");
+		printf("void oops(void)\n{\n");
+		printf("\t" ASM_BLOCK_START "\n"
+			"\t\t// %u bytes\n"
+			"\t\t\".byte 0x%02x",
+			code->count - i,
+			code->bytes[i]);
+		for (i++; i<code->count; i++)
+			printf(", 0x%02x", code->bytes[i]);
+		printf("\"\n"
+			"\t" ASM_BLOCK_END "\n"
+			"}\n\n");
+	}
 }
 
 int main(void)
@@ -91,10 +121,10 @@ int main(void)
 	struct code *code;
 
 	text = find_oops_code(stdin);
-	printf("# %s", text);
+	printf("/*\n * Code: %s */\n\n", text);
 
 	code = parse_oops_code(text);
-	print_code(code);
+	print_code(code, stdout);
 
 	return 0;
 }
