@@ -6,7 +6,7 @@ all: ${TARGET}
 ${TARGET}: oops-code.c
 
 clean:
-	rm -f ${TARGET}
+	rm -f ${TARGET} *~ *.o
 
 .PHONY: test
 test: ${TARGET}
