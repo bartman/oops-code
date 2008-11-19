@@ -1,0 +1,44 @@
+#!/bin/sh
+
+OBJ=$1
+SYM=$2
+
+if test -z "${OBJ}" -o -z "${SYM}" ; then
+	echo "syntax:"
+	echo "\t$0 module symbol[+offset]"
+	echo "example:"
+	echo "\t$0 driver.o bad_bad_symbol+0x8b"
+	exit 1
+fi
+
+OFS=$(echo $SYM | grep '+' | sed -e 's/^.*+//;')
+SYM=$(echo $SYM | sed -e 's/+.*$//;')
+
+if ! test -r ${OBJ} ; then
+	echo "module '${OBJ}' cannot be read" >&2
+	exit 1
+fi
+
+range=$(objdump -t ${OBJ} | grep '\.text' | sort | grep -A2 ${SYM} | \
+	cut -d ' ' -f 1 | xargs)
+
+if ! (echo ${range} | grep "[0-9a-fA-F]\+ [0-9a-fA-F]\+" > /dev/null) ; then
+	echo "cannot find symbol ${SYM} in ${OBJ}; range='${range}'" >&2
+	exit 1
+fi
+
+start=$(echo ${range} | tr ' ' '\n' | head -n1)
+stop=$(echo ${range} | tr ' ' '\n' | tail -n1)
+options="--start-address=0x$start --stop-address=0x$stop"
+
+offset=$(echo ${OFS} ${range} | (read a b c ; echo $a 0x$b))
+offset=$(echo ${offset} | xargs printf "%d+%d")
+offset=$(echo ${offset} | bc | xargs printf "%x")
+
+cmd="objdump -S ${OBJ} ${options}"
+
+echo ">>> ${OBJ} ${SYM} +${OFS} ${offset} <<<"
+echo ">>> $cmd <<<"
+
+$cmd | sed -e "s/^  \( *${offset}:.*\)$/->\1      ******/;"
+
