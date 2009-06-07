@@ -93,7 +93,7 @@ static int read_oops(FILE *in, struct oops *oops)
 		}
 
 		e = p + strlen(p) - 1;
-		while (e > p && isspace(*e) || iscntrl(*e)) *(e--) = 0;
+		while (e > p && (isspace(*e) || iscntrl(*e))) *(e--) = 0;
 
 		if (!strncmp(p, "Code: ", 6))
 			oops->code_text = strdup(p + 6);
@@ -124,7 +124,7 @@ static int read_oops(FILE *in, struct oops *oops)
 
 static off_t parse_oops_addr(struct conf *conf, const char *text)
 {
-	off_t addr = 0;
+	unsigned long long addr = 0;
 	int i, width;
 	const char *p = text;
 	const char *e = p + strlen(p) - 1;

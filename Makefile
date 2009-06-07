@@ -1,7 +1,7 @@
 
 TARGET = oops-code
 
-CFLAGS = -ggdb
+CFLAGS = -ggdb -Wall
 
 all: ${TARGET}
 
