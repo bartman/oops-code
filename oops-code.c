@@ -137,7 +137,7 @@ static void gen_names(char **s_name, char **x_name)
 	snprintf(*x_name, 128, "/tmp/oops-code-%u", pid);
 }
 
-int main(void)
+static void process(FILE *oops)
 {
 	const char *text = NULL;
 	struct code *code;
@@ -164,7 +164,7 @@ int main(void)
 	asm_file = fdopen(asm_fd, "w");
 	assert(asm_file);
 
-	text = find_oops_code(stdin);
+	text = find_oops_code(oops);
 	printf("# Code: %s \n", text);
 	fflush(stdout);
 
@@ -199,6 +199,11 @@ int main(void)
 
 	unlink (asm_name);
 	unlink (exe_name);
+}
+
+int main(void)
+{
+	process(stdin);
 
 	return 0;
 }
