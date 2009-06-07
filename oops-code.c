@@ -1,8 +1,10 @@
 #define _GNU_SOURCE
+#include <argp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <assert.h>
@@ -10,6 +12,42 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+
+const char *program = "oops-code";
+const char *argp_program_version = "oops-code 0.0";
+const char *argp_program_bug_address = "<bart@jukie.net>";
+
+static char doc[] = "oops-code - parses oops messages";
+
+static char args_doc[] = "ARG1 ARG2";
+
+static struct argp_option options[] = {
+	{"verbose",  'v', 0,      0,  "Produce verbose output" },
+	{"quiet",    'q', 0,      0,  "Don't produce any output" },
+	{ 0 }
+};
+
+struct conf
+{
+	int silent, verbose;
+	FILE *input;
+};
+
+
+static void die(const char *fmt, ...)
+{
+	va_list ap;
+	fflush(stdout);
+	fprintf(stderr, "%s: ", basename(program));
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	if (errno)
+		fprintf(stderr, ": %s.\n", strerror(errno));
+	else
+		fprintf(stderr, ".\n");
+	exit(1);
+}
 
 static const char *find_oops_code(FILE *in)
 {
@@ -137,9 +175,9 @@ static void gen_names(char **s_name, char **x_name)
 	snprintf(*x_name, 128, "/tmp/oops-code-%u", pid);
 }
 
-static void process(FILE *oops)
+static void process(const struct conf *conf)
 {
-	const char *text = NULL;
+	const char *text;
 	struct code *code;
 
 	off_t oops_ip;
@@ -164,7 +202,9 @@ static void process(FILE *oops)
 	asm_file = fdopen(asm_fd, "w");
 	assert(asm_file);
 
-	text = find_oops_code(oops);
+	text = find_oops_code(conf->input);
+	if (!text)
+		die("Failed to find Code in the oops text");
 	printf("# Code: %s \n", text);
 	fflush(stdout);
 
@@ -201,9 +241,59 @@ static void process(FILE *oops)
 	unlink (exe_name);
 }
 
-int main(void)
+static error_t
+parse_opt (int key, char *arg, struct argp_state *state)
 {
-	process(stdin);
+	struct conf *conf = state->input;
+
+	switch (key)
+	{
+	case 'q':
+		conf->silent = 1;
+		break;
+
+	case 'v':
+		conf->verbose = 1;
+		break;
+
+	case ARGP_KEY_ARG:
+		if (state->arg_num >= 1)
+			/* Too many arguments. */
+			argp_usage (state);
+
+		conf->input = fopen(arg, "r");
+		if (!conf->input)
+			die("Could not open '%s' for reading", arg);
+
+		fprintf(stderr, "Reading from '%s'.\n", arg);
+		break;
+
+	case ARGP_KEY_END:
+		if (!conf->input) {
+			fprintf(stderr, "Reading from stdin.\n");
+			conf->input = stdin;
+		}
+		break;
+
+	default:
+		return ARGP_ERR_UNKNOWN;
+	}
+	return 0;
+}
+
+static struct argp argp = { options, parse_opt, args_doc, doc };
+
+int main(int argc, char *argv[])
+{
+	struct conf conf;
+
+	memset(&conf, 0, sizeof(conf));
+
+	program = argv[0];
+	argp_parse(&argp, argc, argv, 0, 0, &conf);
+
+	process(&conf);
 
 	return 0;
 }
+
