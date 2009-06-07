@@ -23,6 +23,8 @@ static char doc[] = "oops-code - parses oops messages";
 static char args_doc[] = "ARG1 ARG2";
 
 static struct argp_option options[] = {
+	{"bits",     'b', "NUM",  0,  "Produce verbose output" },
+	{NULL,       'm', "NUM",  OPTION_ALIAS },
 	{"verbose",  'v', 0,      0,  "Produce verbose output" },
 	{"quiet",    'q', 0,      0,  "Don't produce any output" },
 	{ 0 }
@@ -148,16 +150,26 @@ static off_t parse_oops_addr(struct conf *conf, const char *text)
 	}
 	p += 2;
 
-	for (width = sizeof(off_t)*2; width; width -= 8)
-		if (have(width, xdigit, p))
-			break;
+	if (conf->bits) {
+		width = conf->bits / 4;
+		if (!have(width, xdigit, p)) {
+			warn("Expecting %d hexdigits at '%s'", width, p);
+			return 0;
+		}
+	} else {
+		for (width = sizeof(off_t)*2; width; width -= 8)
+			if (have(width, xdigit, p))
+				break;
+		if (!width) {
+			warn("Expecting hexdigits at '%s'", p);
+			return 0;
+		}
+
+		conf->bits = width * 4;
+		printf("# Guessing platform is %d bits\n", conf->bits);
+	}
 
 	printf("# Width: %d\n", width);
-
-	if (!width) {
-		warn("Expecting hexdigits at '%s'", p);
-		return 0;
-	}
 
 	if (p[width] != '>' || p[width+1] != ']') {
 		warn("Expecting '>]' at '%s'", p);
@@ -362,6 +374,18 @@ parse_opt (int key, char *arg, struct argp_state *state)
 
 	case 'v':
 		conf->verbose = 1;
+		break;
+
+	case 'b':
+	case 'm':
+		conf->bits = atoi(arg);
+		switch (conf->bits) {
+		case 32:
+		case 64:
+			break;
+		default:
+			die("Only 32 and 64 are supported for --bits");
+		}
 		break;
 
 	case ARGP_KEY_ARG:
