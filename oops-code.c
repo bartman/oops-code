@@ -338,9 +338,10 @@ static void process(struct conf *conf)
 	assert(cmd);
 
 	snprintf(cmd, 1024,
-		"gcc -m32 -ggdb "
+		"gcc -m%u -ggdb "
 		"-Xlinker --section-start -Xlinker .oops=0x%08lx "
 		"-o %s %s",
+		conf->bits,
 		addr, exe_name, asm_name);
 
 	rc = system (cmd);
