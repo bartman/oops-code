@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <assert.h>
+#include <ctype.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -56,12 +57,19 @@ static const char *find_oops_code(FILE *in)
 	ssize_t buff_len;
 
 	while ((buff_len = getline(&buff, &buff_size, in)) != -1) {
-		char *p;
+		char *p = buff;
+		char *t;
 
-		if (strncmp(buff, "Code: ", 6))
+		if (*p == '[') {
+			do { p++; } while (*p==' ' || *p=='.' || isdigit(*p));
+			if (*p!=']') continue;
+			do { p++; } while (*p==' ');
+		}
+
+		if (strncmp(p, "Code: ", 6))
 			continue;
 
-		p = buff + 6;
+		p += 6;
 
 		return p;
 	}
