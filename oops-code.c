@@ -28,29 +28,53 @@ static struct argp_option options[] = {
 	{ 0 }
 };
 
-struct conf
-{
+struct conf {
 	int silent, verbose;
 	FILE *input;
+	unsigned bits;
 };
 
+struct oops {
+	const char *code_text;
+	const char *ip_text;
+};
+
+
+
+static void __warnf(int __errno, const char *fmt, va_list ap)
+{
+	fflush(stdout);
+	fprintf(stderr, "%s: ", basename(program));
+	vfprintf(stderr, fmt, ap);
+	if (__errno)
+		fprintf(stderr, ": %s.\n", strerror(errno));
+	else
+		fprintf(stderr, ".\n");
+}
+
+static void warn(const char *fmt, ...)
+{
+	va_list ap;
+	int __errno = errno;
+
+	va_start(ap, fmt);
+	__warnf(__errno, fmt, ap);
+	va_end(ap);
+}
 
 static void die(const char *fmt, ...)
 {
 	va_list ap;
-	fflush(stdout);
-	fprintf(stderr, "%s: ", basename(program));
+	int __errno = errno;
+
 	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
+	__warnf(__errno, fmt, ap);
 	va_end(ap);
-	if (errno)
-		fprintf(stderr, ": %s.\n", strerror(errno));
-	else
-		fprintf(stderr, ".\n");
+
 	exit(1);
 }
 
-static const char *find_oops_code(FILE *in)
+static int read_oops(FILE *in, struct oops *oops)
 {
 	char *buff = NULL;
 	size_t buff_size = 0;
@@ -58,7 +82,7 @@ static const char *find_oops_code(FILE *in)
 
 	while ((buff_len = getline(&buff, &buff_size, in)) != -1) {
 		char *p = buff;
-		char *t;
+		char *e;
 
 		if (*p == '[') {
 			do { p++; } while (*p==' ' || *p=='.' || isdigit(*p));
@@ -66,15 +90,89 @@ static const char *find_oops_code(FILE *in)
 			do { p++; } while (*p==' ');
 		}
 
-		if (strncmp(p, "Code: ", 6))
-			continue;
+		e = p + strlen(p) - 1;
+		while (e > p && isspace(*e) || iscntrl(*e)) *(e--) = 0;
 
-		p += 6;
+		if (!strncmp(p, "Code: ", 6))
+			oops->code_text = strdup(p + 6);
 
-		return p;
+		else if (!strncmp(p, "RIP: ", 5))
+			oops->ip_text = strdup(p + 5);
+
+		else if (!strncmp(p, "EIP: ", 5))
+			oops->ip_text = strdup(p + 5);
+
+		else if (!strncmp(p, "---[ end trace ", 15))
+			break;
 	}
 
-	return NULL;
+	return !oops->code_text || !oops->ip_text;
+}
+
+#define have(cnt,check,ptr) ({ \
+	int __i, __ret = 1; \
+	const char *__ptr = (ptr); \
+	for (__i = 0; __i < (cnt); __i++) { \
+		if (is##check(*(__ptr++))) continue; \
+		__ret = 0; \
+		break; \
+	} \
+	__ret; \
+})
+
+static off_t parse_oops_addr(struct conf *conf, const char *text)
+{
+	off_t addr = 0;
+	int i, width;
+	const char *p = text;
+	const char *e = p + strlen(p) - 1;
+
+	/*
+	 * We could see things like this:
+	 *
+	 *    0060:[<90628d27>] EFLAGS: 00010202 CPU: 3
+	 *    [<90628d27>] sock_common_recvmsg+0x2c/0x45 SS:ESP 0068:f6c7dd98
+	 *       0060:[<c01a5196>]    Tainted: P     U VLI
+	 *    0010:[<ffffffff810b82f7>]  [<ffffffff810b82f7>] do_sys_poll+
+	*/
+
+	while (p<e && isblank(*p)) p++;
+	while (p<e && isblank(*e)) e--;
+
+	if (have(4,xdigit,p) && p[4] == ':')
+		p += 5;
+
+	if (p[0] != '[' || p[1] != '<') {
+		warn("Expecting '[<' at '%s'", p);
+		return 0;
+	}
+	p += 2;
+
+	for (width = sizeof(off_t)*2; width; width -= 8)
+		if (have(width, xdigit, p))
+			break;
+
+	printf("# Width: %d\n", width);
+
+	if (!width) {
+		warn("Expecting hexdigits at '%s'", p);
+		return 0;
+	}
+
+	if (p[width] != '>' || p[width+1] != ']') {
+		warn("Expecting '>]' at '%s'", p);
+		return 0;
+	}
+
+	for (i = 0; i < width; i++) {
+		char c = tolower(*(p++));
+		addr <<= 4;
+		addr |= isdigit(c) ? (c - '0') : (c - 'a' + 10);
+	}
+
+	printf("# Addr: 0x%0*llx\n", width, addr);
+
+	return addr;
 }
 
 struct code {
@@ -183,12 +281,12 @@ static void gen_names(char **s_name, char **x_name)
 	snprintf(*x_name, 128, "/tmp/oops-code-%u", pid);
 }
 
-static void process(const struct conf *conf)
+static void process(struct conf *conf)
 {
-	const char *text;
+	struct oops oops;
 	struct code *code;
 
-	off_t oops_ip;
+	off_t addr;
 
 	char *asm_name;
 	char *exe_name;
@@ -199,8 +297,6 @@ static void process(const struct conf *conf)
 	char *cmd;
 	int rc;
 
-	oops_ip = 0xc01a516b;
-
 	gen_names(&asm_name, &exe_name);
 
 	asm_fd = creat(asm_name, O_CREAT | O_EXCL | O_WRONLY
@@ -210,13 +306,17 @@ static void process(const struct conf *conf)
 	asm_file = fdopen(asm_fd, "w");
 	assert(asm_file);
 
-	text = find_oops_code(conf->input);
-	if (!text)
-		die("Failed to find Code in the oops text");
-	printf("# Code: %s \n", text);
+	if (read_oops(conf->input, &oops))
+		die("Parsing failure");
+	printf("# RIP:  %s \n", oops.ip_text);
+	printf("# Code: %s \n", oops.code_text);
 	fflush(stdout);
 
-	code = parse_oops_code(text);
+	addr = parse_oops_addr(conf, oops.ip_text);
+	if (!addr)
+		die("Cannot extract IP from '%s'", oops.ip_text);
+
+	code = parse_oops_code(oops.code_text);
 	print_code(code, asm_file);
 
 	fclose(asm_file);
@@ -229,7 +329,7 @@ static void process(const struct conf *conf)
 		"gcc -m32 -ggdb "
 		"-Xlinker --section-start -Xlinker .oops=0x%08lx "
 		"-o %s %s",
-		oops_ip, exe_name, asm_name);
+		addr, exe_name, asm_name);
 
 	rc = system (cmd);
 	assert(rc == 0);
@@ -238,8 +338,8 @@ static void process(const struct conf *conf)
 		"objdump -D -j .oops "
 		"--start-address=0x%08lx "
 		"--stop-address=0x%08lx %s",
-		oops_ip,
-		oops_ip + code->count,
+		addr,
+		addr + code->count,
 		exe_name);
 
 	rc = system (cmd);
