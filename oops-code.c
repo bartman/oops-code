@@ -86,6 +86,8 @@ static int read_oops(FILE *in, struct oops *oops)
 		char *p = buff;
 		char *e;
 
+		while (isspace(*p)) p++;
+
 		if (*p == '[') {
 			do { p++; } while (*p==' ' || *p=='.' || isdigit(*p));
 			if (*p!=']') continue;
@@ -295,7 +297,7 @@ static void gen_names(char **s_name, char **x_name)
 
 static void process(struct conf *conf)
 {
-	struct oops oops;
+	struct oops oops = { 0, 0 };
 	struct code *code;
 
 	off_t addr;
