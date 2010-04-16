@@ -171,10 +171,10 @@ static off_t parse_oops_addr(struct conf *conf, const char *text)
 		printf("# Guessing platform is %d bits\n", conf->bits);
 	}
 
-	printf("# Width: %d\n", width);
+	printf("# Width: %d (%ubit)\n", width, width * 4);
 
 	if (p[width] != '>' || p[width+1] != ']') {
-		warn("Expecting '>]' at '%s'", p);
+		warn("Expecting '>]' at %u in '%s'", width, p);
 		return 0;
 	}
 
