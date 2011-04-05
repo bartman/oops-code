@@ -19,8 +19,11 @@ if ! test -r ${OBJ} ; then
 	exit 1
 fi
 
-range=$(objdump -t ${OBJ} | grep '\.text' | sort | grep -A2 ${SYM} | \
-	cut -d ' ' -f 1 | xargs)
+range=$(objdump -t ${OBJ} | grep '\.text' | sort \
+        | awk '/\<gsci_scan_thread\>/ { s=strtonum("0x"$1)
+                                        l=strtonum("0x"$5)
+                                        e=s+l
+                                        printf "%x %x\n", s, e }')
 
 if ! (echo ${range} | grep "[0-9a-fA-F]\+ [0-9a-fA-F]\+" > /dev/null) ; then
 	echo "cannot find symbol ${SYM} in ${OBJ}; range='${range}'" >&2
