@@ -22,7 +22,7 @@ will need `objdump` from the *binutils* package.
 
 ## Building
 
-After obtaining the sources just run make in the project directory.
+After obtaining the sources just run `make` in the project directory.
 
         make
         
@@ -64,7 +64,10 @@ After obtaining the sources just run make in the project directory.
         c01a51a4:	f6 44 24 14 10       	testb  $0x10,0x14(%esp)
         c01a51a9:	89 c3                	mov    %eax,%ebx
 
+# Other useful stuff
 
+ - Article on [HOWTO find oops location](http://kerneltrap.org/node/3648),
+   by Denis Vlasenko.
 
 
 vim: set ts=8 et sw=8 tw=72 ft=mkd
