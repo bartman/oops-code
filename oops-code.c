@@ -100,15 +100,25 @@ static int read_oops(FILE *in, struct oops *oops)
 		if (!strncmp(p, "Code: ", 6))
 			oops->code_text = strdup(p + 6);
 
+		else if (!strncmp(p, "Code=", 5))
+			oops->code_text = strdup(p + 5);
+
 		else if (!strncmp(p, "RIP: ", 5))
 			oops->ip_text = strdup(p + 5);
 
 		else if (!strncmp(p, "EIP: ", 5))
 			oops->ip_text = strdup(p + 5);
 
+		else if (!strncmp(p, "RIP=", 4))
+			oops->ip_text = strdup(p + 4);
+
 		else if (!strncmp(p, "---[ end trace ", 15))
 			break;
 	}
+
+	printf("IP:   %s\n", oops->ip_text);
+	printf("code: %s\n", oops->code_text);
+	printf("\n");
 
 	return !oops->code_text || !oops->ip_text;
 }
@@ -124,33 +134,9 @@ static int read_oops(FILE *in, struct oops *oops)
 	__ret; \
 })
 
-static off_t parse_oops_addr(struct conf *conf, const char *text)
+static unsigned validate_or_guess_address_width(struct conf *conf, const char *p)
 {
-	unsigned long long addr = 0;
-	int i, width;
-	const char *p = text;
-	const char *e = p + strlen(p) - 1;
-
-	/*
-	 * We could see things like this:
-	 *
-	 *    0060:[<90628d27>] EFLAGS: 00010202 CPU: 3
-	 *    [<90628d27>] sock_common_recvmsg+0x2c/0x45 SS:ESP 0068:f6c7dd98
-	 *       0060:[<c01a5196>]    Tainted: P     U VLI
-	 *    0010:[<ffffffff810b82f7>]  [<ffffffff810b82f7>] do_sys_poll+
-	*/
-
-	while (p<e && isblank(*p)) p++;
-	while (p<e && isblank(*e)) e--;
-
-	if (have(4,xdigit,p) && p[4] == ':')
-		p += 5;
-
-	if (p[0] != '[' || p[1] != '<') {
-		warn("Expecting '[<' at '%s'", p);
-		return 0;
-	}
-	p += 2;
+	unsigned width;
 
 	if (conf->bits) {
 		width = conf->bits / 4;
@@ -172,6 +158,57 @@ static off_t parse_oops_addr(struct conf *conf, const char *text)
 	}
 
 	printf("# Width: %d (%ubit)\n", width, width * 4);
+
+	return width;
+}
+
+static off_t parse_oops_addr(struct conf *conf, const char *text)
+{
+	unsigned long long addr = 0;
+	int i;
+	unsigned width;
+	const char *p = text;
+	const char *e = p + strlen(p) - 1;
+
+	/*
+	 * We could see things like this:
+	 *
+	 *    0060:[<90628d27>] EFLAGS: 00010202 CPU: 3
+	 *    [<90628d27>] sock_common_recvmsg+0x2c/0x45 SS:ESP 0068:f6c7dd98
+	 *       0060:[<c01a5196>]    Tainted: P     U VLI
+	 *    0010:[<ffffffff810b82f7>]  [<ffffffff810b82f7>] do_sys_poll+
+	*/
+
+	while (p<e && isblank(*p)) p++;
+	while (p<e && isblank(*e)) e--;
+
+	/* test for short form */
+	if (have(16,xdigit,p) && (!p[16] || isblank(p[16]))) {
+		char *term = NULL;
+		off_t val;
+
+		width = validate_or_guess_address_width(conf, p);
+		if (!width)
+			return 0;
+
+		val = strtoull(p, &term, 16);
+		if (val != ULLONG_MAX && errno != ERANGE
+		    && (!term || isblank(*term)))
+			return val;
+	}
+
+	if (have(4,xdigit,p) && p[4] == ':')
+		p += 5;
+
+	if (p[0] != '[' || p[1] != '<') {
+		warn("Expecting '[<' at '%s'", p);
+		return 0;
+	}
+	p += 2;
+
+	width = validate_or_guess_address_width(conf, p);
+	if (!width)
+		return 0;
 
 	if (p[width] != '>' || p[width+1] != ']') {
 		warn("Expecting '>]' at %u in '%s'", width, p);

@@ -20,7 +20,7 @@ if ! test -r ${OBJ} ; then
 fi
 
 range=$(objdump -t ${OBJ} | grep '\.text' | sort \
-        | awk '/\<gsci_scan_thread\>/ { s=strtonum("0x"$1)
+        | awk '/\<'"$SYM"'\>/ { s=strtonum("0x"$1)
                                         l=strtonum("0x"$5)
                                         e=s+l
                                         printf "%x %x\n", s, e }')
@@ -38,7 +38,7 @@ offset=$(echo ${OFS} ${range} | (read a b c ; echo $a 0x$b))
 offset=$(echo ${offset} | xargs printf "%d+%d")
 offset=$(echo ${offset} | bc | xargs printf "%x")
 
-cmd="objdump -S ${OBJ} ${options}"
+cmd="objdump --line-numbers --file-start-context -S ${OBJ} ${options}"
 
 echo ">>> ${OBJ} ${SYM} +${OFS} ${offset} <<<"
 echo ">>> $cmd <<<"
