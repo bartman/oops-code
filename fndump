@@ -29,12 +29,25 @@ if ! test -r ${OBJ} ; then
 	exit 1
 fi
 
-range=( $(objdump -t ${OBJ} | grep '\.text\s' | sort \
-        | awk '/\<'"$SYM"'\>/ {
-	s=strtonum("0x"$1)
-	l=strtonum("0x"$5)
-	e=s+l
-	printf "%x %x\n", s, e }') )
+range=( $(objdump -t ${OBJ} | awk '
+	BEGIN {
+		l[0] = 0
+	}
+	$6 == "'"$SYM"'" && $4 == ".text" {
+		s[0]=strtonum("0x"$1)
+		l[0]=strtonum("0x"$5)
+	}
+	$6 ~ "'"$SYM"'" && $4 == ".text.unlikely" {
+		s[1]=strtonum("0x"$1)
+		l[1]=strtonum("0x"$5)
+	}
+	END {
+		for (i in l) {
+			e=s[i]+l[i]
+			printf "%x %x\n", s[i], e
+			exit
+		}
+	}') )
 
 echo "range=${range[*]}"
 
@@ -56,8 +69,8 @@ echo ">>> ${OBJ} ${SYM} +${OFS} (${range[*]}) ${offset} <<<"
 echo ">>> $cmd <<<"
 
 if [ -t 0 ] && [ -t 1 ] ; then
-	$cmd | vim -c "/^  \( *${offset}:.*\)$" -R -
+	$cmd | vim -c "/^ \+\( *${offset}:.*\)$" -R -
 else
-	$cmd | sed -e "s/^  \( *${offset}:.*\)$/->\1      ******/;"
+	$cmd | sed -e "s/^ \+\( *${offset}:.*\)$/->\1      ******/;"
 fi
 
