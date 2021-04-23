@@ -69,8 +69,8 @@ echo ">>> ${OBJ} ${SYM} +${OFS} (${range[*]}) ${offset} <<<"
 echo ">>> $cmd <<<"
 
 if [ -t 0 ] && [ -t 1 ] ; then
-	$cmd | vim -c "/^ \+\( *${offset}:.*\)$" -R -
+	$cmd | vim -c "/^ \+${offset}:.*$" -R -
 else
-	$cmd | sed -e "s/^ \+\( *${offset}:.*\)$/->\1      ******/;"
+	$cmd | sed -e "s/^ \{,2\}\( *${offset}:.*\)$/->\1      ******/;"
 fi
 
