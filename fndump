@@ -43,9 +43,11 @@ range=( $(objdump -t ${OBJ} | awk '
 	}
 	END {
 		for (i in l) {
-			e=s[i]+l[i]
-			printf "%x %x\n", s[i], e
-			exit
+			if (l[i]) {
+				e=s[i]+l[i]
+				printf "%x %x\n", s[i], e
+				exit
+			}
 		}
 	}') )
 
