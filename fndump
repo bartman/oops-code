@@ -1,43 +1,73 @@
 #!/bin/bash
 
-OBJ=$1 ; shift
-SYM=$1 ; shift
-PREFIX=$@
+SELF="${0##*/}"
+DEBUG=false
+OBJ= SYM= PREFIX=
+
+dbg() { $DEBUG && echo >&2 "# $@" ; }
+die() { echo >&2 "ERROR: $@" ; exit 1 ; }
+
+showhelp() {
+	local ret=${1:-0}
+	cat <<END
+syntax:
+	$SELF -h
+	$SELF [-n] symbol[+offset]
+	$SELF [-n] module symbol[+offset]
+	$SELF [-n] module symbol[+offset] prefix
+
+options:
+	-h --help               this help
+	-d --debug              more verbose
+
+example:
+	$SELF driver.o bad_bad_symbol+0x8b
+
+END
+	exit $ret
+}
+
+while [[ "${1:0:1}" = "-" ]] ; do
+	case $1 in
+		-h|--help)  showhelp 0 ;;
+		-d|--debug) DEBUG=true ;;
+		-*)         die "invalid option $1"
+	esac
+	shift
+done
+
+case ${#@} in
+	1) SYM=$1 ;;
+	2) OBJ=$1 ; SYM=$2 ;;
+	3) OBJ=$1 ; SYM=$2 ; shift 2 ; PREFIX="$@" ;;
+	*) showhelp 1 ;;
+esac
 
 # hack
 #PREFIX="--prefix=`pwd` --prefix-strip=3"
 #PREFIX="--prefix=`pwd` --prefix-strip=5"
 
-if test -z "${OBJ}" -o -z "${SYM}" ; then
-	echo "syntax:"
-	echo "\t$0 module symbol[+offset]"
-	echo "example:"
-	echo "\t$0 driver.o bad_bad_symbol+0x8b"
-	exit 1
-fi
-
+SYM=${SYM/[0-9a-fA-F]*:/}
 SYM=${SYM%/*}
 OFS="${SYM#*+}"
 [ "$SYM" = "$OFS" ] && OFS=0
 SYM=${SYM%+*}
 
-#echo >&2 "SYM=$SYM"
-#echo >&2 "OFS=$OFS"
+dbg "SYM=$SYM"
+dbg "OFS=$OFS"
 
-if ! test -r ${OBJ} ; then
-	echo "module '${OBJ}' cannot be read" >&2
-	exit 1
-fi
-
-range=( $(objdump -t ${OBJ} | awk '
+getrange() {
+	local obj=$1
+	local sym=$2
+	objdump -t ${obj} | awk '
 	BEGIN {
 		l[0] = 0
 	}
-	$6 == "'"$SYM"'" && $4 == ".text" {
+	$6 == "'"$sym"'" && $4 == ".text" {
 		s[0]=strtonum("0x"$1)
 		l[0]=strtonum("0x"$5)
 	}
-	$6 ~ "'"$SYM"'" && $4 == ".text.unlikely" {
+	$6 ~ "'"$sym"'" && $4 == ".text.unlikely" {
 		s[1]=strtonum("0x"$1)
 		l[1]=strtonum("0x"$5)
 	}
@@ -49,30 +79,49 @@ range=( $(objdump -t ${OBJ} | awk '
 				exit
 			}
 		}
-	}') )
+	}'
+}
 
-echo "range=${range[*]}"
-
-if [ ${#range[@]} != 2 ] ; then
-	echo "cannot find symbol ${SYM} in ${OBJ}; range='${range[*]}'" >&2
-	exit 1
+RANGE=()
+if test -n "${OBJ}" ; then
+	dbg "OBJ=$OBJ"
+	test -r ${OBJ} || die "module '${OBJ}' cannot be read"
+	RANGE=( $(getrange $OBJ $SYM) )
+	dbg "RANGE=( ${RANGE[*]} )"
+	if [ ${#RANGE[@]} != 2 ] ; then
+		die "cannot find symbol ${SYM} in ${OBJ}; RANGE='${RANGE[*]}'"
+	fi
+else
+	OBJS=()
+	OBJS+=( $(find . -name '*.ko' ) )
+	OBJS+=( $(find . -name '*.o' ) )
+	dbg "OBJS=( ${OBJS[*]} )"
+	for OBJ in ${OBJS[@]} ; do
+		RANGE=( $(getrange $OBJ $SYM) )
+		dbg "$OBJ: RANGE=( ${RANGE[*]} )"
+		[ ${#RANGE[@]} = 2 ] && break
+	done
+	if [ ${#RANGE[@]} != 2 ] ; then
+		die "cannot find symbol ${SYM} anywhere"
+	fi
 fi
 
-options="--start-address=0x${range[0]} --stop-address=0x${range[1]}"
 
-base=${range[0]}
-[ ${base:0:2} = 0x ] || base=0x$base
+OPTIONS="--start-address=0x${RANGE[0]} --stop-address=0x${RANGE[1]}"
+
+BASE=${RANGE[0]}
+[ ${BASE:0:2} = 0x ] || BASE=0x$BASE
 [ ${OFS:0:2} = 0x ] || OFS=0x${OFS:-0}
-offset=$( printf '%x' $(( ${OFS} + $base )) )
+OFFSET=$( printf '%x' $(( ${OFS} + $BASE )) )
 
-cmd="objdump -S -l $PREFIX ${OBJ} ${options}"
+CMD="objdump -S -l $PREFIX $OBJ $OPTIONS"
 
-echo ">>> ${OBJ} ${SYM} +${OFS} (${range[*]}) ${offset} <<<"
-echo ">>> $cmd <<<"
+dbg ">>> $OBJ $SYM +$OFS (${RANGE[*]}) $OFFSET <<<"
+dbg ">>> $CMD <<<"
 
 if [ -t 0 ] && [ -t 1 ] ; then
-	$cmd | vim -c "/^ \+${offset}:.*$" -R -
+	$CMD | vim -c ':set ft=cmix' -c "/^ \+${OFFSET}:.*$" -R -
 else
-	$cmd | sed -e "s/^ \{,2\}\( *${offset}:.*\)$/->\1      ******/;"
+	$CMD | sed -e "s/^ \{,2\}\( *${OFFSET}:.*\)$/->\1      ******/;"
 fi
 
