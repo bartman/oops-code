@@ -39,6 +39,7 @@ struct conf {
 struct oops {
 	const char *code_text;
 	const char *ip_text;
+	int ip_bits;
 };
 
 
@@ -97,17 +98,20 @@ static int read_oops(FILE *in, struct oops *oops)
 		e = p + strlen(p) - 1;
 		while (e > p && (isspace(*e) || iscntrl(*e))) *(e--) = 0;
 
-		if (!strncmp(p, "Code: ", 6))
+		if (!strncmp(p, "Code: ", 6)) {
 			oops->code_text = strdup(p + 6);
 
-		else if (!strncmp(p, "RIP: ", 5))
+		} else if (!strncmp(p, "RIP: ", 5)) {
 			oops->ip_text = strdup(p + 5);
+			oops->ip_bits = 64;
 
-		else if (!strncmp(p, "EIP: ", 5))
+		} else if (!strncmp(p, "EIP: ", 5)) {
 			oops->ip_text = strdup(p + 5);
+			oops->ip_bits = 32;
 
-		else if (!strncmp(p, "---[ end trace ", 15))
+		} else if (!strncmp(p, "---[ end trace ", 15)) {
 			break;
+		}
 	}
 
 	return !oops->code_text || !oops->ip_text;
@@ -147,8 +151,21 @@ static off_t parse_oops_addr(struct conf *conf, const char *text)
 		p += 5;
 
 	if (p[0] != '[' || p[1] != '<') {
-		warn("Expecting '[<' at '%s'", p);
-		return 0;
+
+		char *r = strchr(p, '+');
+		if (!p || r[1] != '0' || r[2] != 'x') {
+			warn("Expecting '...+0xXXX/' or '[<' at '%s'", p);
+			return 0;
+		}
+		r++;
+
+		addr = strtoul(r+2, NULL, 16);
+		if (addr==0 || addr==ULONG_MAX) {
+			warn("Could not get number from '%s'", r);
+			return 0;
+		}
+
+		return addr;
 	}
 	p += 2;
 
@@ -297,7 +314,7 @@ static void gen_names(char **s_name, char **x_name)
 
 static void process(struct conf *conf)
 {
-	struct oops oops = { 0, 0 };
+	struct oops oops = {};
 	struct code *code;
 
 	off_t addr;
@@ -342,9 +359,12 @@ static void process(struct conf *conf)
 	snprintf(cmd, 1024,
 		"gcc -m%u -ggdb "
 		"-Xlinker --section-start -Xlinker .oops=0x%08lx "
+		"-nostdlib "
 		"-o %s %s",
-		conf->bits,
+		conf->bits ?: oops.ip_bits,
 		addr, exe_name, asm_name);
+
+	printf("# %s\n", cmd);
 
 	rc = system (cmd);
 	assert(rc == 0);
@@ -356,6 +376,8 @@ static void process(struct conf *conf)
 		addr,
 		addr + code->count,
 		exe_name);
+
+	printf("# %s\n", cmd);
 
 	rc = system (cmd);
 	assert(rc == 0);
